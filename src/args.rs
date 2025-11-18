@@ -1,6 +1,7 @@
 //! CLI argument definitions and environment variable handling
 
 use clap::Parser;
+use std::path::PathBuf;
 
 /// CLI arguments for the server
 #[derive(Parser, Debug)]
@@ -29,6 +30,14 @@ pub struct Args {
     /// Verbose output
     #[arg(short, long, default_value_t = false)]
     pub verbose: bool,
+
+    /// Path to TLS certificate file (PEM format) for HTTPS/HTTP2 support
+    #[arg(long)]
+    pub tls_cert: Option<PathBuf>,
+
+    /// Path to TLS private key file (PEM format) for HTTPS/HTTP2 support
+    #[arg(long)]
+    pub tls_key: Option<PathBuf>,
 }
 
 impl Args {
@@ -73,5 +82,26 @@ impl Args {
                 self.verbose = false;
             }
         }
+        if let Ok(val) = std::env::var("MOCK_OPENAI_TLS_CERT") {
+            self.tls_cert = Some(PathBuf::from(val));
+        }
+        if let Ok(val) = std::env::var("MOCK_OPENAI_TLS_KEY") {
+            self.tls_key = Some(PathBuf::from(val));
+        }
+    }
+
+    /// Validate that both TLS cert and key are provided if either is specified
+    pub fn validate_tls_config(&self) -> Result<(), String> {
+        let cert_provided = self.tls_cert.is_some();
+        let key_provided = self.tls_key.is_some();
+
+        if cert_provided != key_provided {
+            return Err(
+                "Both --tls-cert and --tls-key must be provided together for HTTPS support"
+                    .to_string(),
+            );
+        }
+
+        Ok(())
     }
 }

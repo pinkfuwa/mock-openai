@@ -10,17 +10,21 @@
 //! - GET /v1/models
 //! - GET /v1/models/{id}
 //! - GET /health
+//! - HTTP/2 support with TLS certificates
 //!
 //! This implementation is intentionally minimal and optimized for benchmarking.
 //!
 //! Usage:
 //!   Build:
 //!     cargo build --release
-//!   Run:
+//!   Run (HTTP):
 //!     ./target/release/mock-openai --port 3000 --response-delay-ms 10 --pregen-count 4096
+//!   Run (HTTPS/HTTP2):
+//!     ./target/release/mock-openai --port 3000 --tls-cert cert.pem --tls-key key.pem
 
 mod args;
 mod endpoints;
+mod tls;
 mod types;
 mod utils;
 
@@ -37,12 +41,30 @@ use std::sync::Arc;
 use types::AppState;
 use utils::{generate_stream_token_samples, sample_normal_f64, tokens_to_chars};
 
+extern crate jemallocator;
+
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let mut args = Args::parse();
     // Allow environment variables to override parameters set on the CLI
     args.apply_env_overrides();
-    println!("Starting mock-openai on port {}", args.port);
+
+    // Validate TLS configuration
+    if let Err(e) = args.validate_tls_config() {
+        eprintln!("Configuration error: {}", e);
+        std::process::exit(1);
+    }
+
+    let protocol = if args.tls_cert.is_some() {
+        "HTTPS/HTTP2"
+    } else {
+        "HTTP"
+    };
+
+    println!("Starting mock-openai on port {} ({})", args.port, protocol);
     if args.verbose {
         println!("Configuration: {:?}", args);
     }
@@ -82,21 +104,75 @@ async fn main() -> std::io::Result<()> {
         response_delay_ms: args.response_delay_ms,
     });
 
-    let bind = format!("0.0.0.0:{}", args.port);
-    HttpServer::new(move || {
-        App::new()
-            .app_data(app_state.clone())
-            .route("/health", web::get().to(health_handler))
-            .route("/v1/models", web::get().to(models_list_handler))
-            .route("/v1/models/{id}", web::get().to(model_get_handler))
-            .route(
-                "/v1/chat/completions",
-                web::post().to(chat_completions_handler),
-            )
-            .route("/v1/completions", web::post().to(completions_handler))
-            .route("/v1/embeddings", web::post().to(embeddings_handler))
-    })
-    .bind(bind)?
-    .run()
-    .await
+    let bind_addr = format!("0.0.0.0:{}", args.port);
+
+    // Configure and run the server with optional TLS
+    if let (Some(cert_path), Some(key_path)) = (&args.tls_cert, &args.tls_key) {
+        println!(
+            "Loading TLS certificates from {} and {}",
+            cert_path.display(),
+            key_path.display()
+        );
+
+        match tls::load_tls_config(cert_path, key_path) {
+            Ok((certs, key)) => {
+                // Build server config with no client auth
+                let mut server_config = rustls::ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(certs, key)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                    })?;
+
+                // Enable HTTP/2 and HTTP/1.1 via ALPN
+                server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+                println!("✓ TLS configuration loaded successfully");
+                println!("✓ HTTP/2 enabled (ALPN protocols: h2, http/1.1)");
+
+                HttpServer::new(move || {
+                    App::new()
+                        .app_data(app_state.clone())
+                        .route("/health", web::get().to(health_handler))
+                        .route("/v1/models", web::get().to(models_list_handler))
+                        .route("/v1/models/{id}", web::get().to(model_get_handler))
+                        .route(
+                            "/v1/chat/completions",
+                            web::post().to(chat_completions_handler),
+                        )
+                        .route("/v1/completions", web::post().to(completions_handler))
+                        .route("/v1/embeddings", web::post().to(embeddings_handler))
+                })
+                .bind_rustls_0_23(&bind_addr, server_config)?
+                .run()
+                .await
+            }
+            Err(e) => {
+                eprintln!("Failed to load TLS configuration: {}", e);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("TLS configuration error: {}", e),
+                ))
+            }
+        }
+    } else {
+        println!("Running without TLS (HTTP only)");
+
+        HttpServer::new(move || {
+            App::new()
+                .app_data(app_state.clone())
+                .route("/health", web::get().to(health_handler))
+                .route("/v1/models", web::get().to(models_list_handler))
+                .route("/v1/models/{id}", web::get().to(model_get_handler))
+                .route(
+                    "/v1/chat/completions",
+                    web::post().to(chat_completions_handler),
+                )
+                .route("/v1/completions", web::post().to(completions_handler))
+                .route("/v1/embeddings", web::post().to(embeddings_handler))
+        })
+        .bind(&bind_addr)?
+        .run()
+        .await
+    }
 }
