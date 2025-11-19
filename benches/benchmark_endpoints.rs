@@ -148,27 +148,28 @@ fn bench_health(c: &mut Criterion) {
     let mut group = c.benchmark_group("health_endpoint");
     group.sample_size(100);
 
-    // Create AppState once for this benchmark group
     let app_state = create_app_state(BenchConfig::low_latency());
 
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
+    let app_service = rt.block_on(async {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::from(app_state))
+                .route("/health", web::get().to(health_handler)),
+        )
+        .await
+    });
+
     group.bench_function("health_check", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app = test::init_service(
-                        App::new()
-                            .app_data(web::Data::from(app_state))
-                            .route("/health", web::get().to(health_handler)),
-                    )
-                    .await;
-
-                    let req = test::TestRequest::get().uri("/health").to_request();
-
-                    black_box(test::call_service(&app, req).await)
-                }
-            });
+        let app_service = &app_service;
+        b.to_async(&rt).iter(|| {
+            let app_service = app_service;
+            async move {
+                let req = test::TestRequest::get().uri("/health").to_request();
+                let resp = test::call_service(&app_service, req).await;
+                black_box(resp) // Black-box the response to ensure it's measured
+            }
+        });
     });
 
     group.finish();
@@ -184,46 +185,46 @@ fn bench_models(c: &mut Criterion) {
 
     let app_state = create_app_state(BenchConfig::low_latency());
 
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
+
     group.bench_function("models_list", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app = test::init_service(
-                        App::new()
-                            .app_data(web::Data::from(app_state))
-                            .route("/v1/models", web::get().to(models_list_handler)),
-                    )
-                    .await;
+        let app_service = rt.block_on(async {
+            test::init_service(
+                App::new()
+                    .app_data(web::Data::from(Arc::clone(&app_state)))
+                    .route("/v1/models", web::get().to(models_list_handler)),
+            )
+            .await
+        });
 
-                    let req = test::TestRequest::get().uri("/v1/models").to_request();
-
-                    black_box(test::call_service(&app, req).await)
-                }
-            });
+        b.to_async(&rt).iter(|| {
+            let app_service = &app_service;
+            async move {
+                let req = test::TestRequest::get().uri("/v1/models").to_request();
+                black_box(test::call_service(app_service, req).await)
+            }
+        });
     });
 
     group.bench_function("models_get_by_id", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app = test::init_service(
-                        App::new()
-                            .app_data(web::Data::from(app_state))
-                            .route("/v1/models/{id}", web::get().to(model_get_handler)),
-                    )
-                    .await;
+        let app_service = rt.block_on(async {
+            test::init_service(
+                App::new()
+                    .app_data(web::Data::from(Arc::clone(&app_state)))
+                    .route("/v1/models/{id}", web::get().to(model_get_handler)),
+            )
+            .await
+        });
 
-                    let req = test::TestRequest::get()
-                        .uri("/v1/models/gpt-4-mock")
-                        .to_request();
-
-                    black_box(test::call_service(&app, req).await)
-                }
-            });
+        b.to_async(&rt).iter(|| {
+            let app_service = &app_service;
+            async move {
+                let req = test::TestRequest::get()
+                    .uri("/v1/models/gpt-4-mock")
+                    .to_request();
+                black_box(test::call_service(app_service, req).await)
+            }
+        });
     });
 
     group.finish();
@@ -238,61 +239,64 @@ fn bench_embeddings(c: &mut Criterion) {
     group.sample_size(50);
 
     let app_state = create_app_state(BenchConfig::small_response());
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
+
+    let app_service_single = rt.block_on(async {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::from(Arc::clone(&app_state)))
+                .route("/v1/embeddings", web::post().to(embeddings_handler)),
+        )
+        .await
+    });
 
     group.bench_function("embeddings_single", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app = test::init_service(
-                        App::new()
-                            .app_data(web::Data::from(app_state))
-                            .route("/v1/embeddings", web::post().to(embeddings_handler)),
-                    )
-                    .await;
+        let app_service = &app_service_single;
+        b.to_async(&rt).iter(|| {
+            let app_service = app_service;
+            async move {
+                let payload = serde_json::json!({
+                    "model": "text-embedding-3-small",
+                    "input": "test input"
+                });
 
-                    let payload = serde_json::json!({
-                        "model": "text-embedding-3-small",
-                        "input": "test input"
-                    });
+                let req = test::TestRequest::post()
+                    .uri("/v1/embeddings")
+                    .set_json(payload)
+                    .to_request();
 
-                    let req = test::TestRequest::post()
-                        .uri("/v1/embeddings")
-                        .set_json(payload)
-                        .to_request();
+                black_box(test::call_service(app_service, req).await)
+            }
+        });
+    });
 
-                    black_box(test::call_service(&app, req).await)
-                }
-            });
+    let app_service_batch = rt.block_on(async {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::from(Arc::clone(&app_state)))
+                .route("/v1/embeddings", web::post().to(embeddings_handler)),
+        )
+        .await
     });
 
     group.bench_function("embeddings_batch", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app = test::init_service(
-                        App::new()
-                            .app_data(web::Data::from(app_state))
-                            .route("/v1/embeddings", web::post().to(embeddings_handler)),
-                    )
-                    .await;
+        let app_service = &app_service_batch;
+        b.to_async(&rt).iter(|| {
+            let app_service = app_service;
+            async move {
+                let payload = serde_json::json!({
+                    "model": "text-embedding-3-small",
+                    "input": vec!["test 1", "test 2", "test 3"]
+                });
 
-                    let payload = serde_json::json!({
-                        "model": "text-embedding-3-small",
-                        "input": vec!["test 1", "test 2", "test 3"]
-                    });
+                let req = test::TestRequest::post()
+                    .uri("/v1/embeddings")
+                    .set_json(payload)
+                    .to_request();
 
-                    let req = test::TestRequest::post()
-                        .uri("/v1/embeddings")
-                        .set_json(payload)
-                        .to_request();
-
-                    black_box(test::call_service(&app, req).await)
-                }
-            });
+                black_box(test::call_service(app_service, req).await)
+            }
+        });
     });
 
     group.finish();
@@ -307,34 +311,36 @@ fn bench_completions(c: &mut Criterion) {
     group.sample_size(50);
 
     let app_state = create_app_state(BenchConfig::medium_response());
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
+
+    let app_service = rt.block_on(async {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::from(Arc::clone(&app_state)))
+                .route("/v1/completions", web::post().to(completions_handler)),
+        )
+        .await
+    });
 
     group.bench_function("completions_small", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app = test::init_service(
-                        App::new()
-                            .app_data(web::Data::from(app_state))
-                            .route("/v1/completions", web::post().to(completions_handler)),
-                    )
-                    .await;
+        let app_service = &app_service;
+        b.to_async(&rt).iter(|| {
+            let app_service = app_service;
+            async move {
+                let payload = serde_json::json!({
+                    "model": "gpt-4-mock",
+                    "prompt": "Once upon a time",
+                    "max_tokens": 100
+                });
 
-                    let payload = serde_json::json!({
-                        "model": "gpt-3.5-turbo",
-                        "prompt": "Once upon a time",
-                        "max_tokens": 100
-                    });
+                let req = test::TestRequest::post()
+                    .uri("/v1/completions")
+                    .set_json(payload)
+                    .to_request();
 
-                    let req = test::TestRequest::post()
-                        .uri("/v1/completions")
-                        .set_json(payload)
-                        .to_request();
-
-                    black_box(test::call_service(&app, req).await)
-                }
-            });
+                black_box(test::call_service(app_service, req).await)
+            }
+        });
     });
 
     group.finish();
@@ -349,20 +355,124 @@ fn bench_chat_completions_non_streaming(c: &mut Criterion) {
     group.sample_size(50);
 
     let app_state = create_app_state(BenchConfig::medium_response());
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
+
+    let app_service = rt.block_on(async {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::from(Arc::clone(&app_state)))
+                .route(
+                    "/v1/chat/completions",
+                    web::post().to(chat_completions_handler),
+                ),
+        )
+        .await
+    });
 
     group.bench_function("chat_non_streaming", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app =
-                        test::init_service(App::new().app_data(web::Data::from(app_state)).route(
-                            "/v1/chat/completions",
-                            web::post().to(chat_completions_handler),
-                        ))
-                        .await;
+        let app_service = &app_service;
+        b.to_async(&rt).iter(|| {
+            let app_service = app_service;
+            async move {
+                let payload = serde_json::json!({
+                    "model": "gpt-4-mock",
+                    "messages": [
+                        {"role": "user", "content": "Hello!"}
+                    ],
+                    "stream": false
+                });
 
+                let req = test::TestRequest::post()
+                    .uri("/v1/chat/completions")
+                    .set_json(payload)
+                    .to_request();
+
+                black_box(test::call_service(app_service, req).await)
+            }
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_chat_completions_streaming(c: &mut Criterion) {
+    let mut group = c.benchmark_group("chat_completions_streaming");
+    group.sample_size(50);
+
+    let app_state = create_app_state(BenchConfig::medium_response());
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
+
+    let app_service = rt.block_on(async {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::from(Arc::clone(&app_state)))
+                .route(
+                    "/v1/chat/completions",
+                    web::post().to(chat_completions_handler),
+                ),
+        )
+        .await
+    });
+
+    group.bench_function("chat_streaming", |b| {
+        let app_service = &app_service;
+        b.to_async(&rt).iter(|| {
+            let app_service = app_service;
+            async move {
+                let payload = serde_json::json!({
+                    "model": "gpt-4-mock",
+                    "messages": [
+                        {"role": "user", "content": "Hello!"}
+                    ],
+                    "stream": true
+                });
+
+                let req = test::TestRequest::post()
+                    .uri("/v1/chat/completions")
+                    .set_json(payload)
+                    .to_request();
+
+                black_box(test::call_service(app_service, req).await)
+            }
+        });
+    });
+
+    group.finish();
+}
+
+// ============================================================================
+// Response Delay Impact Benchmarks
+// ============================================================================
+
+fn bench_response_delay_impact(c: &mut Criterion) {
+    let mut group = c.benchmark_group("response_delay_impact");
+    group.sample_size(30);
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
+
+    for (name, config) in &[
+        ("no_delay", BenchConfig::low_latency()),
+        ("medium_delay", BenchConfig::medium_latency()),
+        ("high_delay", BenchConfig::high_latency()),
+    ] {
+        let app_state = create_app_state(*config);
+
+        let app_service = rt.block_on(async {
+            test::init_service(
+                App::new()
+                    .app_data(web::Data::from(Arc::clone(&app_state)))
+                    .route(
+                        "/v1/chat/completions",
+                        web::post().to(chat_completions_handler),
+                    ),
+            )
+            .await
+        });
+
+        group.bench_with_input(BenchmarkId::from_parameter(name), name, |b, _| {
+            let app_service = &app_service;
+            b.to_async(&rt).iter(|| {
+                let app_service = app_service;
+                async move {
                     let payload = serde_json::json!({
                         "model": "gpt-4-mock",
                         "messages": [
@@ -376,99 +486,9 @@ fn bench_chat_completions_non_streaming(c: &mut Criterion) {
                         .set_json(payload)
                         .to_request();
 
-                    black_box(test::call_service(&app, req).await)
+                    black_box(test::call_service(app_service, req).await)
                 }
             });
-    });
-
-    group.finish();
-}
-
-fn bench_chat_completions_streaming(c: &mut Criterion) {
-    let mut group = c.benchmark_group("chat_completions_streaming");
-    group.sample_size(50);
-
-    let app_state = create_app_state(BenchConfig::medium_response());
-
-    group.bench_function("chat_streaming", |b| {
-        let app_state = Arc::clone(&app_state);
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| {
-                let app_state = Arc::clone(&app_state);
-                async move {
-                    let app =
-                        test::init_service(App::new().app_data(web::Data::from(app_state)).route(
-                            "/v1/chat/completions",
-                            web::post().to(chat_completions_handler),
-                        ))
-                        .await;
-
-                    let payload = serde_json::json!({
-                        "model": "gpt-4-mock",
-                        "messages": [
-                            {"role": "user", "content": "Hello!"}
-                        ],
-                        "stream": true
-                    });
-
-                    let req = test::TestRequest::post()
-                        .uri("/v1/chat/completions")
-                        .set_json(payload)
-                        .to_request();
-
-                    black_box(test::call_service(&app, req).await)
-                }
-            });
-    });
-
-    group.finish();
-}
-
-// ============================================================================
-// Response Delay Impact Benchmarks
-// ============================================================================
-
-fn bench_response_delay_impact(c: &mut Criterion) {
-    let mut group = c.benchmark_group("response_delay_impact");
-    group.sample_size(30);
-
-    for (name, config) in &[
-        ("no_delay", BenchConfig::low_latency()),
-        ("medium_delay", BenchConfig::medium_latency()),
-        ("high_delay", BenchConfig::high_latency()),
-    ] {
-        let app_state = create_app_state(*config);
-
-        group.bench_with_input(BenchmarkId::from_parameter(name), name, |b, _| {
-            let app_state = Arc::clone(&app_state);
-            b.to_async(tokio::runtime::Runtime::new().unwrap())
-                .iter(|| {
-                    let app_state = Arc::clone(&app_state);
-                    async move {
-                        let app = test::init_service(
-                            App::new().app_data(web::Data::from(app_state)).route(
-                                "/v1/chat/completions",
-                                web::post().to(chat_completions_handler),
-                            ),
-                        )
-                        .await;
-
-                        let payload = serde_json::json!({
-                            "model": "gpt-4-mock",
-                            "messages": [
-                                {"role": "user", "content": "Hello!"}
-                            ],
-                            "stream": false
-                        });
-
-                        let req = test::TestRequest::post()
-                            .uri("/v1/chat/completions")
-                            .set_json(payload)
-                            .to_request();
-
-                        black_box(test::call_service(&app, req).await)
-                    }
-                });
         });
     }
 
@@ -482,6 +502,7 @@ fn bench_response_delay_impact(c: &mut Criterion) {
 fn bench_article_pool_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("article_pool_sizes");
     group.sample_size(30);
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
 
     for pool_size in &[128, 512, 2048] {
         let config = BenchConfig {
@@ -492,39 +513,42 @@ fn bench_article_pool_sizes(c: &mut Criterion) {
         };
         let app_state = create_app_state(config);
 
+        let app_service = rt.block_on(async {
+            test::init_service(
+                App::new()
+                    .app_data(web::Data::from(Arc::clone(&app_state)))
+                    .route(
+                        "/v1/chat/completions",
+                        web::post().to(chat_completions_handler),
+                    ),
+            )
+            .await
+        });
+
         group.bench_with_input(
             BenchmarkId::from_parameter(format!("pool_{}", pool_size)),
             pool_size,
             |b, _| {
-                let app_state = Arc::clone(&app_state);
-                b.to_async(tokio::runtime::Runtime::new().unwrap())
-                    .iter(|| {
-                        let app_state = Arc::clone(&app_state);
-                        async move {
-                            let app = test::init_service(
-                                App::new().app_data(web::Data::from(app_state)).route(
-                                    "/v1/chat/completions",
-                                    web::post().to(chat_completions_handler),
-                                ),
-                            )
-                            .await;
+                let app_service = &app_service;
+                b.to_async(&rt).iter(|| {
+                    let app_service = app_service;
+                    async move {
+                        let payload = serde_json::json!({
+                            "model": "gpt-4-mock",
+                            "messages": [
+                                {"role": "user", "content": "Test message"}
+                            ],
+                            "stream": false
+                        });
 
-                            let payload = serde_json::json!({
-                                "model": "gpt-4-mock",
-                                "messages": [
-                                    {"role": "user", "content": "Test message"}
-                                ],
-                                "stream": false
-                            });
+                        let req = test::TestRequest::post()
+                            .uri("/v1/chat/completions")
+                            .set_json(payload)
+                            .to_request();
 
-                            let req = test::TestRequest::post()
-                                .uri("/v1/chat/completions")
-                                .set_json(payload)
-                                .to_request();
-
-                            black_box(test::call_service(&app, req).await)
-                        }
-                    });
+                        black_box(test::call_service(app_service, req).await)
+                    }
+                });
             },
         );
     }
@@ -539,6 +563,7 @@ fn bench_article_pool_sizes(c: &mut Criterion) {
 fn bench_combined_configurations(c: &mut Criterion) {
     let mut group = c.benchmark_group("combined_stress");
     group.sample_size(20);
+    let rt = tokio::runtime::Runtime::new().unwrap(); // One runtime for the whole group
 
     let configs = vec![
         ("low_latency_small", BenchConfig::low_latency()),
@@ -549,47 +574,48 @@ fn bench_combined_configurations(c: &mut Criterion) {
     for (name, config) in configs {
         let app_state = create_app_state(config);
 
+        let app_service = rt.block_on(async {
+            test::init_service(
+                App::new()
+                    .app_data(web::Data::from(Arc::clone(&app_state)))
+                    .route("/health", web::get().to(health_handler))
+                    .route("/v1/models", web::get().to(models_list_handler))
+                    .route(
+                        "/v1/chat/completions",
+                        web::post().to(chat_completions_handler),
+                    ),
+            )
+            .await
+        });
+
         group.bench_with_input(BenchmarkId::from_parameter(name), &config, |b, _| {
-            let app_state = Arc::clone(&app_state);
-            b.to_async(tokio::runtime::Runtime::new().unwrap())
-                .iter(|| {
-                    let app_state = Arc::clone(&app_state);
-                    async move {
-                        let app = test::init_service(
-                            App::new()
-                                .app_data(web::Data::from(app_state))
-                                .route("/health", web::get().to(health_handler))
-                                .route("/v1/models", web::get().to(models_list_handler))
-                                .route(
-                                    "/v1/chat/completions",
-                                    web::post().to(chat_completions_handler),
-                                ),
-                        )
-                        .await;
+            let app_service = &app_service;
+            b.to_async(&rt).iter(|| {
+                let app_service = app_service;
+                async move {
+                    // Simulate a mixed workload
+                    let health_req = test::TestRequest::get().uri("/health").to_request();
+                    let _ = test::call_service(app_service, health_req).await;
 
-                        // Simulate a mixed workload
-                        let health_req = test::TestRequest::get().uri("/health").to_request();
-                        let _ = test::call_service(&app, health_req).await;
+                    let models_req = test::TestRequest::get().uri("/v1/models").to_request();
+                    let _ = test::call_service(app_service, models_req).await;
 
-                        let models_req = test::TestRequest::get().uri("/v1/models").to_request();
-                        let _ = test::call_service(&app, models_req).await;
+                    let payload = serde_json::json!({
+                        "model": "gpt-4-mock",
+                        "messages": [
+                            {"role": "user", "content": "Hello!"}
+                        ],
+                        "stream": false
+                    });
 
-                        let payload = serde_json::json!({
-                            "model": "gpt-4-mock",
-                            "messages": [
-                                {"role": "user", "content": "Hello!"}
-                            ],
-                            "stream": false
-                        });
+                    let chat_req = test::TestRequest::post()
+                        .uri("/v1/chat/completions")
+                        .set_json(payload)
+                        .to_request();
 
-                        let chat_req = test::TestRequest::post()
-                            .uri("/v1/chat/completions")
-                            .set_json(payload)
-                            .to_request();
-
-                        black_box(test::call_service(&app, chat_req).await)
-                    }
-                });
+                    black_box(test::call_service(app_service, chat_req).await)
+                }
+            });
         });
     }
 
