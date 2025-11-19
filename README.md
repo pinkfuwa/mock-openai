@@ -114,6 +114,71 @@ For more details, see [HTTP2.md](./HTTP2.md).
 - Tokens per response are sampled from a normal distribution using the configured mean and standard deviation. Passing `max_tokens` in the request caps the emitted tokens.
 - For SSE streaming, each event will optionally wait `--response-delay-ms` milliseconds between chunks to emulate network latency.
 
+## Benchmarking
+
+This project includes a comprehensive benchmark suite for testing all endpoints under various configurations.
+
+### Quick Start
+
+```bash
+# Run all benchmarks
+cargo bench --bench benchmark_endpoints
+
+# Run specific endpoint benchmarks
+cargo bench --bench benchmark_endpoints -- health
+cargo bench --bench benchmark_endpoints -- models
+cargo bench --bench benchmark_endpoints -- embeddings
+cargo bench --bench benchmark_endpoints -- completions
+cargo bench --bench benchmark_endpoints -- chat_completions
+```
+
+### What Gets Benchmarked
+
+The benchmark suite tests all endpoints under different configurations:
+
+- **Health & Models**: Basic endpoint responsiveness
+- **Embeddings**: Vector generation under various latencies (0ms, 10ms, 50ms)
+- **Completions**: Text generation with different response sizes (small, medium, large)
+- **Chat Completions**: Both streaming and non-streaming modes
+- **Response Delay Impact**: Effect of simulated network latency on streaming
+- **Article Pool Sizes**: Impact of pre-generated article count (128, 512, 2048)
+- **Combined Configurations**: Realistic stress scenarios
+
+### Benchmark Scenarios
+
+| Scenario | Command | Expected Time |
+|----------|---------|---|
+| Health check | `cargo bench -- health` | ~2ms |
+| Models API | `cargo bench -- models` | ~1ms |
+| Embeddings (0ms delay) | `cargo bench -- embeddings_endpoint::low_latency` | ~1ms |
+| Completions (small) | `cargo bench -- completions_endpoint::small_response` | ~2ms |
+| Completions (large) | `cargo bench -- completions_endpoint::large_response` | ~50ms |
+| Chat (streaming, medium) | `cargo bench -- chat_completions_streaming::medium_response` | ~40ms |
+| Response delay impact | `cargo bench -- response_delay_impact` | Scales linearly |
+| Stress test | `cargo bench -- combined_configurations::high_stress_config` | ~100ms |
+
+### Compare Performance Over Time
+
+```bash
+# Save baseline before making changes
+cargo bench --bench benchmark_endpoints -- --save-baseline before_changes
+
+# Make your optimizations...
+
+# Compare against baseline
+cargo bench --bench benchmark_endpoints -- --baseline before_changes
+```
+
+Criterion will show performance improvements (negative %) and regressions (positive %).
+
+### Documentation
+
+For comprehensive benchmarking documentation, see:
+
+- **[BENCHMARK_QUICKSTART.md](./BENCHMARK_QUICKSTART.md)** - Quick reference guide
+- **[BENCHMARKS.md](./BENCHMARKS.md)** - Detailed documentation and best practices
+- **[BENCHMARK_SCENARIOS.md](./BENCHMARK_SCENARIOS.md)** - Complete scenario reference
+
 ## Testing
 
 Run unit tests:

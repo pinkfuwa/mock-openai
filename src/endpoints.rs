@@ -399,7 +399,7 @@ mod tests {
         let req = test::TestRequest::post()
             .uri("/v1/chat/completions")
             .set_json(serde_json::json!({
-                "model": "gpt-4",
+                "model": "gpt-4-mock",
                 "messages": [{"role": "user", "content": "hello"}],
                 "stream": true
             }))

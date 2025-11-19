@@ -120,7 +120,7 @@ Client
 #### ChatCompletionRequest
 ```json
 {
-  "model": "gpt-4",
+  "model": "gpt-4-mock",
   "messages": [
     { "role": "user", "content": "..." }
   ],
@@ -136,7 +136,7 @@ Client
   "id": "chatcmpl-...",
   "object": "chat.completion",
   "created": 1234567890,
-  "model": "gpt-4",
+  "model": "gpt-4-mock",
   "usage": {
     "prompt_tokens": 10,
     "completion_tokens": 20,
