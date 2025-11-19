@@ -1,70 +1,62 @@
-# mock-openai
+# mock-openai 🤖
 
-A high-performance mock OpenAI API server compatible with a subset of OpenAI/OpenRouter endpoints. It is designed for benchmarking and local development. The server simulates completions, chat completions (streaming and non-streaming), embeddings, and model listing endpoints with configurable token distributions, streaming behavior, and artificial latency.
+### A high-performance mock OpenAI API server for development & benchmarking
 
-## Features
+A drop-in replacement for OpenAI/OpenRouter endpoints, designed for ultra-fast local development and load testing. Simulates completions, chat, embeddings, and model endpoints with configurable latency and streaming behavior.
 
-- **High Performance**: Pre-generated mock articles and optimized token sampling
-- **Streaming Support**: Server-Sent Events (SSE) for realistic streaming responses
-- **HTTP/2 Support**: Full HTTP/2 with TLS certificates for high-performance benchmarking
-- **Configurable Behavior**: Token distributions, response delays, and more
-- **Environment Variable Overrides**: Easy configuration via env vars or CLI args
+## ✨ Features
 
-## Quick Start
+- ⚡ **Blazing Fast**: 70,000+ requests/sec ([streaming chat completions on i5-1240p](./report.png))
+- 🔄 **Realistic Streaming**: Full Server-Sent Events (SSE) support
+- 🔒 **HTTP/2 & TLS**: Production-grade benchmarking capabilities
+- 🎛️ **Highly Configurable**: Token distributions, artificial latency, pool size
+- 📦 **Easy to Deploy**: Single binary, environment variables or commandline arguments
 
-Build (release):
+## 📦 Installation
+
+### Prerequisites
+
+- Rust 1.70+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- OpenSSL (for TLS certificate generation)
+
+### Build from source
+
 ```bash
+git clone https://github.com/pinkfuwa/mock-openai.git
+cd mock-openai
 cargo build --release
 ```
 
-Run (HTTP mode):
+The binary will be at `./target/release/mock-openai`.
+
+---
+
+## 🚀 Quick Start
+
+### HTTP Mode (Development)
+
 ```bash
 ./target/release/mock-openai --port 3000
 ```
 
-Run (HTTPS/HTTP2 mode):
+### HTTPS/HTTP2 Mode (Benchmarking)
+
+Generate certificates (one-time setup):
 ```bash
-# First, generate self-signed certificates for testing
 openssl genrsa -out key.pem 2048
 openssl req -new -x509 -key key.pem -out cert.pem -days 365
+```
 
-# Then run with TLS
+Run with TLS:
+```bash
 ./target/release/mock-openai --port 3000 --tls-cert cert.pem --tls-key key.pem
 ```
 
-## Usage
+✅ **Done!** Your server is ready at `http://127.0.0.1:3000` (or `https://` with TLS)
 
-```
-Mock OpenAI API server for benchmarking
+---
 
-Usage: mock-openai [OPTIONS]
-
-Options:
-  -p, --port <PORT>
-          Port to listen on [default: 3000]
-      --pregen-count <PREGEN_COUNT>
-          Number of pre-generated articles [default: 4096]
-      --token-mean <TOKEN_MEAN>
-          Mean tokens per generated response [default: 256]
-      --token-stddev <TOKEN_STDDEV>
-          Standard deviation for tokens per response [default: 64]
-      --response-delay-ms <RESPONSE_DELAY_MS>
-          Delay in milliseconds per SSE event to emulate network latency [default: 0]
-      --tls-cert <TLS_CERT>
-          Path to TLS certificate file (PEM format) for HTTPS/HTTP2 support
-      --tls-key <TLS_KEY>
-          Path to TLS private key file (PEM format) for HTTPS/HTTP2 support
-  -v, --verbose
-          Verbose output
-  -h, --help
-          Print help
-  -V, --version
-          Print version
-```
-
-> [!TIP] The server also supports environment variable overrides: `MOCK_OPENAI_PORT`, `MOCK_OPENAI_PREG_COUNT`, `MOCK_OPENAI_TOKEN_MEAN`, `MOCK_OPENAI_TOKEN_STDDEV`, `MOCK_OPENAI_RESPONSE_DELAY_MS`, `MOCK_OPENAI_VERBOSE`, `MOCK_OPENAI_TLS_CERT`, `MOCK_OPENAI_TLS_KEY`.
-
-## API Endpoints
+## 💻 API Usage
 
 All endpoints are mounted at the server root. By default the server listens on `http://127.0.0.1:3000` (or `https://127.0.0.1:3000` with TLS).
 
@@ -75,131 +67,49 @@ All endpoints are mounted at the server root. By default the server listens on `
 - POST /v1/chat/completions
 - POST /v1/embeddings
 
-## HTTP/2 Support
+---
 
-The server now supports HTTP/2 over HTTPS/TLS for high-performance benchmarking scenarios.
+## ⚙️ Configuration
 
-### Enable HTTP/2
+### CLI Options
 
-Provide TLS certificate and key files:
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-p, --port` | 3000 | Server port |
+| `--pregen-count` | 4096 | Size of pre-generated content pool |
+| `--token-mean` | 256 | Average tokens per response |
+| `--token-stddev` | 64 | Token count standard deviation |
+| `--response-delay-ms` | 0 | Artificial latency between SSE chunks (ms) |
+| `--tls-cert` | - | Path to TLS certificate (PEM) |
+| `--tls-key` | - | Path to TLS private key (PEM) |
+| `-v, --verbose` | false | Enable debug logging |
+
+### Environment Variables
+
+All CLI options can be set via env vars (useful for Docker):
 
 ```bash
-./target/release/mock-openai --port 3000 \
-  --tls-cert /path/to/cert.pem \
-  --tls-key /path/to/key.pem
+export MOCK_OPENAI_PORT=8080
+export MOCK_OPENAI_TOKEN_MEAN=512
+export MOCK_OPENAI_RESPONSE_DELAY_MS=50
+export MOCK_OPENAI_VERBOSE=1
+
+./target/release/mock-openai
 ```
 
-The server will:
-- Configure TLS 1.3 for strong encryption
-- Enable HTTP/2 via ALPN protocol negotiation
-- Fall back to HTTP/1.1 for clients that don't support HTTP/2
+> [!TIP]
+> Environment variables take precedence over CLI arguments. Great for containerized deployments!
 
-### Testing HTTP/2
+---
 
-```bash
-# Using curl with HTTP/2
-curl --http2 https://localhost:3000/health --insecure
+## 📊 Benchmarking
 
-# Check which protocol is being used
-curl --http2 https://localhost:3000/health --insecure -v
-```
-
-For more details, see [HTTP2.md](./HTTP2.md).
-
-## Behavior & Configuration
-
-- The server pre-generates a pool of mock articles (default 4096) at startup to avoid runtime allocation overhead and mimic realistic text for responses.
-- Token/character mapping:
-  - The project approximates 1 token ≈ 4 characters (`AVG_CHARS_PER_TOKEN = 4`), used for slicing pre-generated articles.
-- Tokens per response are sampled from a normal distribution using the configured mean and standard deviation. Passing `max_tokens` in the request caps the emitted tokens.
-- For SSE streaming, each event will optionally wait `--response-delay-ms` milliseconds between chunks to emulate network latency.
-
-## Benchmarking
-
-This project includes a comprehensive benchmark suite for testing all endpoints under various configurations.
-
-### Quick Start
+Built-in Criterion benchmarks for comprehensive performance testing:
 
 ```bash
-# Run all benchmarks
 cargo bench --bench benchmark_endpoints
-
-# Run specific endpoint benchmarks
-cargo bench --bench benchmark_endpoints -- health
-cargo bench --bench benchmark_endpoints -- models
-cargo bench --bench benchmark_endpoints -- embeddings
-cargo bench --bench benchmark_endpoints -- completions
-cargo bench --bench benchmark_endpoints -- chat_completions
 ```
 
-### What Gets Benchmarked
+---
 
-The benchmark suite tests all endpoints under different configurations:
-
-- **Health & Models**: Basic endpoint responsiveness
-- **Embeddings**: Vector generation under various latencies (0ms, 10ms, 50ms)
-- **Completions**: Text generation with different response sizes (small, medium, large)
-- **Chat Completions**: Both streaming and non-streaming modes
-- **Response Delay Impact**: Effect of simulated network latency on streaming
-- **Article Pool Sizes**: Impact of pre-generated article count (128, 512, 2048)
-- **Combined Configurations**: Realistic stress scenarios
-
-### Benchmark Scenarios
-
-| Scenario | Command | Expected Time |
-|----------|---------|---|
-| Health check | `cargo bench -- health` | ~2ms |
-| Models API | `cargo bench -- models` | ~1ms |
-| Embeddings (0ms delay) | `cargo bench -- embeddings_endpoint::low_latency` | ~1ms |
-| Completions (small) | `cargo bench -- completions_endpoint::small_response` | ~2ms |
-| Completions (large) | `cargo bench -- completions_endpoint::large_response` | ~50ms |
-| Chat (streaming, medium) | `cargo bench -- chat_completions_streaming::medium_response` | ~40ms |
-| Response delay impact | `cargo bench -- response_delay_impact` | Scales linearly |
-| Stress test | `cargo bench -- combined_configurations::high_stress_config` | ~100ms |
-
-### Compare Performance Over Time
-
-```bash
-# Save baseline before making changes
-cargo bench --bench benchmark_endpoints -- --save-baseline before_changes
-
-# Make your optimizations...
-
-# Compare against baseline
-cargo bench --bench benchmark_endpoints -- --baseline before_changes
-```
-
-Criterion will show performance improvements (negative %) and regressions (positive %).
-
-### Documentation
-
-For comprehensive benchmarking documentation, see:
-
-- **[BENCHMARK_QUICKSTART.md](./BENCHMARK_QUICKSTART.md)** - Quick reference guide
-- **[BENCHMARKS.md](./BENCHMARKS.md)** - Detailed documentation and best practices
-- **[BENCHMARK_SCENARIOS.md](./BENCHMARK_SCENARIOS.md)** - Complete scenario reference
-
-## Testing
-
-Run unit tests:
-```bash
-cargo test --all
-```
-
-## Performance Notes
-
-- **HTTP/1.1**: Good for single-threaded benchmarks and simple load tests
-- **HTTP/2**: Better for concurrent request scenarios with multiplexing benefits
-- Pre-generated articles and token samples eliminate per-request allocation overhead
-- Jemalloc is used as the global allocator for better performance
-
-## Production Considerations
-
-For production deployment with HTTP/2:
-
-1. Use certificates from a trusted Certificate Authority, not self-signed certificates
-2. Implement certificate rotation and monitoring
-3. Consider rate limiting and authentication
-4. Use appropriate TLS configuration for your security requirements
-
-See [HTTP2.md](./HTTP2.md) for detailed production guidance.
+**Happy mocking!** 🎉
