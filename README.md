@@ -6,7 +6,7 @@ A drop-in replacement for OpenAI/OpenRouter endpoints, designed for ultra-fast l
 
 ## ✨ Features
 
-- ⚡ **Blazing Fast**: 70,000+ requests/sec ([streaming chat completions on i5-1240p](./report.png))
+- ⚡ **Blazing Fast**: 10,000+ requests/sec on real machine, [serialization-only measurement for completions on i5-1240p](./report.png)
 - 🔄 **Realistic Streaming**: Full Server-Sent Events (SSE) support
 - 🔒 **HTTP/2 & TLS**: Production-grade benchmarking capabilities
 - 🎛️ **Highly Configurable**: Token distributions, artificial latency, pool size
